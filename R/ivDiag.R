@@ -161,7 +161,7 @@ ivDiag <- function(
       # register
       cl.parallel <- future::makeClusterPSOCK(cores, verbose = FALSE)
       doParallel::registerDoParallel(cl.parallel)
-      expfun <- c("OLS", "IV", "formula_lfe", "robustify")
+      expfun <- c("OLS", "IV", "formula_lfe")
       boot.out <- foreach::foreach(
         i = 1:nboots, .combine = rbind, .inorder = FALSE,
         .export = expfun,
@@ -333,7 +333,7 @@ ivDiag <- function(
       # first strage rho
       rho = round(rho, prec),
       # tF procedure
-      tF = round(tF.out, prec),
+      tF = tF.out,
       # reduced form and first stage
       est_rf = round(est_rf, prec),
       est_fs = round(est_fs, prec),

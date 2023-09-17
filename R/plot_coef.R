@@ -138,7 +138,7 @@ plot_coef <- function(out,
   abline(h = 0, col = "red", lwd = 2, lty = "solid")
   segments(y0 = data$lower_ci, x0 = c(1: ncoefs), y1 = data$upper_ci, x1 = c(1: ncoefs), lwd = 2) #CI
   points(1: ncoefs, data$coef, pch = c(rep(16, ncoefs.ols), rep(17, ncoefs.iv)), col = "blue") #point coefs
-  if ("ar" %in% iv.methods) {
+  if ("iv-ar" %in% iv.methods) {
     if (out$AR$bounded == FALSE) {
       if (length(out$AR$ci) == 1) {
         ar.lab <- "Empty CI"
@@ -150,10 +150,10 @@ plot_coef <- function(out,
   }
   if (stats == TRUE) {
     if (is.null(out$N_cl) == TRUE) {
-      legend("topleft", c(paste0("Effective F = ", sprintf("%.1f", out$F_stat[5])),
+      legend("topleft", c(paste0("Effective F = ", sprintf("%.1f", out$F_stat["F.effective"])),
         paste0("N = ", out$N)), bty="n")
     } else {
-      legend("topleft", c(paste0("Effective F = ", sprintf("%.1f", out$F_stat[5])),
+      legend("topleft", c(paste0("Effective F = ", sprintf("%.1f", out$F_stat["F.effective"])),
         paste0("N = ", out$N, ", Ncl = ", out$N_cl)), bty="n")
     }
     
