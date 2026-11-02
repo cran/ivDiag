@@ -41,6 +41,63 @@ formula_lfe <- function(Y, X, D = NULL, FE = NULL, Z = NULL, cl = NULL) {
   as.formula(paste(c(felm_ss, facs, felm_fs, clusts), collapse = "|"))
 }
 
+# %% factor and character instruments
+# Expand each factor or character instrument into dummy columns, one per level
+# except the base (first) level, with model.matrix() on the instrument alone.
+# Every function downstream then sees several numeric instruments, as felm does
+# when it expands a factor itself. Levels are those present in the complete
+# rows of `used` (the variables the caller uses), so a level that occurs only
+# in rows dropped for missing values does not become an all-zero column.
+# The new columns are named <instrument>_<level> (made syntactic and unique).
+# Numeric and logical instruments are left as they are; with none to expand,
+# the data come back unchanged.
+expand_factor_iv <- function(data, Z, used = Z) {
+  is_cat <- vapply(Z, function(z) is.factor(data[[z]]) || is.character(data[[z]]),
+                   logical(1))
+  if (!any(is_cat)) return(list(data = data, Z = Z))
+  used <- intersect(unique(c(used, Z)), names(data))
+  cc <- stats::complete.cases(as.data.frame(data)[, used, drop = FALSE])
+  taken <- names(data)
+  newZ <- character(0)
+  for (z in Z) {
+    v <- data[[z]]
+    if (!(is.factor(v) || is.character(v))) {
+      newZ <- c(newZ, z)
+      next
+    }
+    lev <- levels(droplevels(factor(v)[cc]))
+    if (length(lev) < 2) {
+      stop("The instrument \"", z, "\" is a factor (or character) with fewer than two ",
+           "levels in the estimation sample, so it does not vary.", call. = FALSE)
+    }
+    f <- factor(v, levels = lev)
+    mf <- stats::model.frame(~ f, data.frame(f = f), na.action = stats::na.pass)
+    mm <- stats::model.matrix(~ f, mf)[, -1, drop = FALSE]
+    nms <- make.names(paste0(z, "_", lev[-1]))
+    nms <- make.unique(c(taken, nms))[length(taken) + seq_along(nms)]
+    taken <- c(taken, nms)
+    for (k in seq_along(nms)) data[[nms[k]]] <- unname(mm[, k])
+    newZ <- c(newZ, nms)
+    message("Instrument \"", z, "\" is a factor with ", length(lev), " levels: it enters as ",
+            length(nms), " dummy instrument", if (length(nms) > 1) "s", " (base level \"",
+            lev[1], "\"): ", paste(nms, collapse = ", "), ".")
+  }
+  list(data = data, Z = newZ)
+}
+
+# %% quiet_nan
+# felm() takes the square root of each coefficient's variance. When a variance
+# is zero in theory (the intercept under one-sided noncompliance), rounding can
+# make it slightly negative, and some BLAS/LAPACK libraries do. sqrt() then
+# warns "NaNs produced" for a coefficient we never use. Muffle that warning
+# only; every other warning passes through.
+quiet_nan <- function(expr) {
+  nan_msg <- gettext("NaNs produced", domain = "R")
+  withCallingHandlers(expr, warning = function(w) {
+    if (identical(conditionMessage(w), nan_msg)) invokeRestart("muffleWarning")
+  })
+}
+
 # %% partialer
 #' partial out controls and covariates from y
 #' @param y The dependent variable
@@ -53,9 +110,9 @@ partialer <- function(Y, X, FE = NULL, data, weights = NULL) {
   # regress variable on controls and FEs and return residuals
   f = formula_lfe(Y = Y, X = X, FE = FE)
   if (is.null(weights) == TRUE) {
-    m <- lfe::felm(f, data)
+    m <- quiet_nan(lfe::felm(f, data))
   } else {
-    m <- lfe::felm(f, data, weights = data[, weights])
+    m <- quiet_nan(lfe::felm(f, data, weights = data[, weights]))
   }
   return(m$residuals[, 1])
 }
@@ -76,9 +133,9 @@ IV <- function(data, D, Y, Z, X = NULL, FE = NULL, cl = NULL, weights = NULL # w
 ) {
   fmla = formula_lfe(Y = Y, D = D, Z = Z, X = X, FE = FE, cl = cl)
   if (is.null(weights)) {
-    m2 = lfe::felm(fmla, data = data)
+    m2 = quiet_nan(lfe::felm(fmla, data = data))
   } else {
-    m2 = lfe::felm(fmla, data = data, weights = data[, weights])
+    m2 = quiet_nan(lfe::felm(fmla, data = data, weights = data[, weights]))
   }
   ## Output
   coef <- c(tail(m2$coefficients, n = 1)) # felm IV fits have endog coef at the tail
@@ -98,9 +155,9 @@ get.vcov <- function(data, D, Y, Z, X = NULL, FE = NULL, cl = NULL, weights = NU
   p_iv <- length(Z)
   fmla = formula_lfe(Y = Y, D = D, Z = Z, X = X, FE = FE, cl = cl)
   if (is.null(weights)) {
-    m2 = lfe::felm(fmla, data = data)
+    m2 = quiet_nan(lfe::felm(fmla, data = data))
   } else {
-    m2 = lfe::felm(fmla, data = data, weights = data[, weights])
+    m2 = quiet_nan(lfe::felm(fmla, data = data, weights = data[, weights]))
   }
   stage1 <- m2$stage1
   p <- nrow(stage1$vcv)
@@ -136,9 +193,9 @@ OLS <- function(data, Y, D, X = NULL, FE = NULL, cl = NULL, weights = NULL # wei
   p_D <- length(D)
   fmla = formula_lfe(Y = Y, D = D, X = X, FE = FE, cl = cl)
   if (is.null(weights) == TRUE) {
-    m1 = lfe::felm(fmla, data = data)
+    m1 = quiet_nan(lfe::felm(fmla, data = data))
   } else {
-    m1 = lfe::felm(fmla, data = data, weights = data[, weights])
+    m1 = quiet_nan(lfe::felm(fmla, data = data, weights = data[, weights]))
   }
   if (is.null(cl) == TRUE) {
     SE <- m1$rse # robust SE
@@ -167,9 +224,9 @@ first_stage_coefs <- function(data, D, Z, X, FE = NULL, weights = NULL # weights
   p_iv <- length(Z)
   formula <- formula_lfe(Y = D, D = Z, X = X, FE = FE)
   if (is.null(weights)) {
-    reg = lfe::felm(formula, data = data)
+    reg = quiet_nan(lfe::felm(formula, data = data))
   } else {
-    reg = lfe::felm(formula, data = data, weights = data[, weights])
+    reg = quiet_nan(lfe::felm(formula, data = data, weights = data[, weights]))
   }
   # slice model fit
   if (is.null(FE) == FALSE) {
@@ -196,9 +253,9 @@ first_stage_rho = function(data, D, Z, X, FE = NULL, weights = NULL # weights is
   # first stage
   fmla = formula_lfe(Y = D, D = Z, X = NULL, FE = NULL, cl = NULL)
   if (is.null(weights) == TRUE) {
-    m = lfe::felm(fmla, data = d0)
+    m = quiet_nan(lfe::felm(fmla, data = d0))
   } else {
-    m = lfe::felm(fmla, data = d0, weights = data[, weights])
+    m = quiet_nan(lfe::felm(fmla, data = d0, weights = data[, weights]))
   }
   # rho
   if (is.null(weights) == TRUE) {

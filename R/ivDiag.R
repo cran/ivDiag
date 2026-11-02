@@ -3,6 +3,8 @@
 #' @param Y outcome (string)
 #' @param D treatment (string)
 #' @param Z instrument (string)
+#'   A factor or character instrument enters as dummies for all levels but the
+#'   first (base) level, so a factor with K levels counts as K - 1 instruments.
 #' @param controls control variables (character vector)
 #' @param FE fixed effects (character vector)
 #' @param cl clustering column for SE (character vector)
@@ -67,11 +69,22 @@ ivDiag <- function(
   }
   if (is.null(Z)) stop("Please provide the instrument(s) Z, or a running variable.")
 
+  # factor or character instruments enter as dummies (all but the base level),
+  # so the F statistics, the AR test, tF and p_iv all see the same instruments
+  # as felm's 2SLS fit
+  iv.exp <- expand_factor_iv(data, Z, used = c(Y, D, Z, controls, FE, cl, weights))
+  data <- iv.exp$data; Z <- iv.exp$Z
+
   # drop missingness
   data <- data[, unique(c(Y, D, Z, controls, FE, cl, weights))]
   data <- haven::zap_labels(data)
   d0 <- as.data.frame(data[complete.cases(data), ])
   n <- nrow(d0); p_iv <- length(Z)
+
+  # effective F; computed first because it stops with a clear error when the
+  # instruments are collinear with each other or with the controls/FE, before
+  # the fits and matrix inversions below fail with obscure messages
+  F.effective <- eff_F(d0, Y = Y, D = D, Z = Z, controls = controls, FE = FE, cl = cl, weights = weights)
 
   ### prep (using the first clustering variable in bootstrap)
   if (is.null(cl) == FALSE) { # find clusters
@@ -284,7 +297,6 @@ ivDiag <- function(
   } else {
     F.cluster <- NA
   }
-  F.effective <- eff_F(data, Y = Y, D = D, Z = Z, controls = controls, FE = FE, cl = cl, weights = weights)
   if (bootstrap == TRUE) {
     F_stat <- c(F.standard, F.robust, F.cluster, F.boot, F.effective)
     names(F_stat) <- c("F.standard", "F.robust", "F.cluster", "F.bootstrap", "F.effective")
